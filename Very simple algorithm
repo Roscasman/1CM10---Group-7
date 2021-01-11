@@ -1,0 +1,169 @@
+# Import libaries: 
+import numpy as np
+import pandas as pd
+import operator
+import random
+import matplotlib.pyplot as plt
+import math
+import itertools
+import gurobipy as gp
+from gurobipy import GRB
+
+
+# Load & sort data:
+df = pd.read_csv('2M38_0.24R.csv')
+header = list(df.columns.values)
+number_of_operations = header[1] 
+number_of_machines = df.at[0, number_of_operations] 
+number_of_toolsets = df.at[1, number_of_operations] 
+capacity_per_machine = df.at[2, number_of_operations] 
+# number_of_operations = int
+# number_of_machines = int
+# number_of_toolsets = int
+# capacity_per_machine = int
+df = df.drop(range(5))
+df.columns = ['Job_i', 'operation_j', 'Releasetime_r_ij', 'Processing_time_p_ij', 'Due_date_d_ij','Tool_set_T_ij','Tool_set_size_Φ_T_ij']
+df = df.reset_index(drop=True)
+df = df.astype({'Job_i':int, 'operation_j':int, 'Releasetime_r_ij':float, 'Processing_time_p_ij':float, 'Due_date_d_ij':float,'Tool_set_T_ij':int,'Tool_set_size_Φ_T_ij':int})
+
+
+
+
+class Operation:
+
+    # Initializer / Instance Attributes
+    def __init__(self,myid,myoperation,myreleasetime,myprocessingtime,myduedate,mytoolset,mytoolsetsize):
+        self.job = myid
+        self.operation = myoperation
+        self.releasetime = myreleasetime
+        self.processingtime=myprocessingtime
+        self.duedate=myduedate
+        self.toolset=mytoolset
+        self.toolsetsize=mytoolsetsize
+        self.tool_switch=0
+        self.endtime=0
+        
+    def reset_operation(self):
+        self.tool_switch=0
+        self.endtime=0
+    
+
+
+
+class Machine:
+    def __init__(self,mytoolsets,mycapacity):
+        self.toolsets_and_sizes=mytoolsets
+        self.capacity=mycapacity
+        self.time_finished=0
+    
+    def add_job(self, job_end_time):
+        self.time_finished=job_end_time
+    
+    
+    def change_capacity(self, toolsetsize):
+        self.capacity=self.capacity-toolsetsize
+        
+    def add_toolset(self, toolset_and_size):
+        self.toolsets_and_sizes.append((toolset_and_size))
+    
+    def Reset_machine(self):
+        self.toolsets_and_sizes=[]
+        self.capacity=capacity_per_machine
+        self.time_finished=0
+        
+        
+        
+Jobb_vector_init=[]
+for i in range(0, len(df)):
+
+    Jobb_vector_init.append("Operation_"+str(df.Job_i[i])+"_"+str(df.operation_j[i]))
+
+list_of_job_vector=(())
+i=0   
+for a in Jobb_vector_init: 
+    a=Operation(df.Job_i[i],df.operation_j[i],df.Releasetime_r_ij[i], df.Processing_time_p_ij[i],df.Due_date_d_ij[i], df.Tool_set_T_ij[i], df.Tool_set_size_Φ_T_ij[i])
+    b="Operation_"+str(df.Job_i[i])+"_"+str(df.operation_j[i])
+    list_of_job_vector=list_of_job_vector+((a,b))
+    i=i+1
+
+objectnames=Jobb_vector_init
+Operationdictionairy={}
+i=0
+for name in objectnames:
+        Operationdictionairy[name]=Operation(df.Job_i[i],df.operation_j[i],df.Releasetime_r_ij[i], df.Processing_time_p_ij[i],df.Due_date_d_ij[i], df.Tool_set_T_ij[i], df.Tool_set_size_Φ_T_ij[i])
+        i=i+1
+
+machinelist=[]
+for x in range (1,(int(number_of_machines)+1)):
+     z="Machine_"+str(x)
+     machinelist.append(z)
+Machinedictionairy={}
+for machine in machinelist:
+    Machinedictionairy[machine]=Machine([], int(capacity_per_machine))
+    
+    
+def sort_jobs(job):
+    return Operationdictionairy[job].duedate    
+
+def unique_toolsets_and_sizes_calculator(Jobb_vector_init):
+    toolsets=[]
+    number_toolsets=0
+    size_of_toolsets=0
+    for job in Jobb_vector_init:
+        if Operationdictionairy[job].toolset not in toolsets:
+            toolsets.append (Operationdictionairy[job].toolset)
+            number_toolsets=number_toolsets+1
+            size_of_toolsets=size_of_toolsets+Operationdictionairy[job].toolsetsize
+    return (size_of_toolsets/number_toolsets)
+
+
+def Reset_classes(Jobb_vector_init, machinelist):
+    for machine in machinelist:
+        Machinedictionairy[machine].Reset_machine    
+    for job in Jobb_vector_init:
+        Operationdictionairy[job].reset_operation
+    
+def Simple_algorithm(Jobb_vector_init):
+
+    Job_vector=[]
+    Machine_vector=[]
+    sorted_jobs=sorted(Jobb_vector_init, key=sort_jobs)
+    capacity=capacity_per_machine
+    average_size=unique_toolsets_and_sizes_calculator(Jobb_vector_init)
+    numbers_of_operations_fitting_to_one_capacity=int(capacity)/average_size
+    start_slice=0
+    steps=round((numbers_of_operations_fitting_to_one_capacity+1)*len(Machinedictionairy))
+    end_slice=start_slice+steps
+    using_slice=sorted_jobs[start_slice:int(end_slice)]
+
+
+    while len(using_slice)>0:
+        z=0 
+        for job in using_slice:
+            x=0
+            a=np.random.randint(0, len(machinelist))
+            while Machinedictionairy[machinelist[a]].capacity<= Operationdictionairy[job].toolsetsize:
+                a=np.random.randint(0, len(machinelist))
+                x=x+1
+                if x>25:
+                    break
+            Job_vector.append(job)
+            Machine_vector.append(machinelist[a])
+            z=z+1
+            if Operationdictionairy[job].toolset not in Machinedictionairy[machinelist[a]].toolsets_and_sizes:
+                Machinedictionairy[machinelist[a]].capacity= Machinedictionairy[machinelist[a]].capacity-Operationdictionairy[job].toolsetsize
+                Machinedictionairy[machinelist[a]].toolsets_and_sizes.append(Operationdictionairy[job].toolset)
+        for job in using_slice[z:]:
+            a=np.random.randint(0, len(machinelist))
+            Job_vector.append(job)
+            Machine_vector.append(machinelist[a])
+                     
+        Reset_classes(Jobb_vector_init, machinelist)
+        
+        start_slice=end_slice
+        end_slice=start_slice+steps
+        end_slice=min( len(sorted_jobs), end_slice)
+        using_slice=sorted_jobs[int(start_slice):int(end_slice)]
+        print(using_slice)
+        
+    return(Job_vector, Machine_vector)
