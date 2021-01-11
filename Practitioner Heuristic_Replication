@@ -1,0 +1,217 @@
+# input part
+import pandas as pd
+import numpy as np
+import random
+import time
+import timeit
+
+
+
+input_file = pd.read_csv('6M140_0.75R.csv',
+index_col=False,
+keep_default_na=True
+)
+
+header = list(input_file.columns.values)
+
+number_of_operations = header[1]
+number_of_machines = input_file.at[0, number_of_operations]
+number_of_toolsets = input_file.at[1, number_of_operations]
+capacity_per_machine = input_file.at[2, number_of_operations]
+
+list_capacity = [int(capacity_per_machine)] * int(number_of_machines)
+
+
+#binary array om bij te houden welke toolset aan welke machine is toegekend
+binary_array = np.zeros([int(number_of_toolsets), int(number_of_machines)], dtype = int)
+array_toolsizes = np.zeros([int(number_of_toolsets), int(number_of_machines)], dtype = int)
+
+input_file = pd.read_csv("6M140_0.75R.csv",
+                         header = 5)
+
+set_operations=input_file
+set_operations=set_operations.rename(columns={"Release time": "Release_time","Processing time": "Processing_time", "Due date": "Due_date", "Tool set": "Toolset", "Tool set size": "Toolsetsize"}, inplace = True)
+
+machine_with_number_list=[]
+for y in range (1, int(number_of_machines) + 1):
+    machine_with_number_list.append('Machine_' + str(y))
+    
+sequence_of_jobs = {i:[] for i in machine_with_number_list}
+
+a_m_m = {i:0 for i in machine_with_number_list}
+
+τ = 1
+w_d = 1
+w_s = 1
+
+# einde input part
+
+###Practicioner heureustic
+#  
+##
+
+def Practitioner_heuristic(input_file, binary_array, list_capacity):
+   Job_vector=[]
+   Machine_vector=[] 
+   O_sorted = input_file.sort_values(by=['Due_date'])
+   O_sorted = O_sorted.reset_index() ## Je moet eerst de index resetten
+   O_sorted['end_time']=0 ## all ending times are record here
+
+#iterate over the series of toolsets and assign toolsets to machines until max capacity per machine is reached
+   for toolset in range (0, (len(O_sorted))):
+       a = O_sorted.Toolset[toolset]
+       Toolset_size = O_sorted.Toolsetsize[int(toolset)]
+
+       if binary_array[a - 1].sum() < 1:
+           subset_machines_sufficient_capacity = []
+           machine_index = 0
+           for machines in range(0, len(list_capacity)):
+               if Toolset_size <= list_capacity[machines]: 
+                   subset_machines_sufficient_capacity.append(machine_index)
+               machine_index += 1
+           if len(subset_machines_sufficient_capacity) > 0:
+               number_toolsets_machine_lowest = 1000 ## even heel hoog gezet, zodat hij er altijd minder heeft voor de eerste 
+               for m in (0, len(subset_machines_sufficient_capacity) - 1):
+                   machines_sufficient_capacity_index = subset_machines_sufficient_capacity[m]
+                   number_toolsets_machine = np.sum(binary_array, axis = 0)[machines_sufficient_capacity_index]
+                   if number_toolsets_machine_lowest > number_toolsets_machine: ##expres niet equal, maar lower gedaan, zodat als ze beide 0 hebben hij diegene met de laagste index pakt
+                       number_toolsets_machine_lowest = number_toolsets_machine
+                       machine_index_lowest = machines_sufficient_capacity_index
+               binary_array[(int(a) - 1),machine_index_lowest] = 1
+               list_capacity[machine_index_lowest] = (list_capacity[machine_index_lowest] - Toolset_size)
+               array_toolsizes[(int(a) - 1),machine_index_lowest] += Toolset_size
+
+               
+## Now the toolsets are sorted, the orders are given to the machines with the good tools and the earliest available time
+## dictionary met sequence of jobs aangemaakt in het inputdeel
+
+#Per operation, selecteer machine met de juiste toolset
+   sum_tardiness = 0
+   sum_setups = 0 
+   for operation in range (0, len(O_sorted)):
+       m_star = ' '
+       z_ijt = 0
+       #determine m_p
+       if operation != 0:
+           earliest_available_machine = min(a_m_m, key=a_m_m.get)
+           m_p = str(earliest_available_machine)
+       else:
+           m_p = 'Machine_1'
+       toolset_operation = O_sorted.Toolset[operation]
+       #determine m_t
+       if binary_array[toolset_operation - 1].sum() == 1:
+           for machine in range (0, (int(number_of_machines))):
+               if binary_array[(int(toolset_operation) - 1), machine] == 1:
+                   m_t = 'Machine_' + str(machine + 1)
+           #determine if m_p and m_t are equal or not 
+           if m_p != m_t:
+               if O_sorted.Operation[operation] == 1:
+                   ξ_m_t = max(O_sorted.Release_time[operation], a_m_m[m_t])
+                   ξ_m_p = max(O_sorted.Release_time[operation], a_m_m[m_p])
+               else:
+                   for operation_rejob in range (0, len(O_sorted) - 1):
+                       if O_sorted.Job[operation_rejob] == O_sorted.Job[operation] and (O_sorted.Operation[operation_rejob] - 1) == O_sorted.Operation[operation]:
+                           duedate_job_before = O_sorted.Due_date[operation_rejob]
+                       else:
+                           duedate_job_before = 0
+                   ξ_m_t = max(O_sorted.Release_time[operation], a_m_m[m_t], duedate_job_before)
+                   ξ_m_p = max(O_sorted.Release_time[operation], a_m_m[m_p], duedate_job_before)
+               if ξ_m_t - ξ_m_p >= 72: #threshold value
+                   sequence_of_jobs[m_p].append((O_sorted.Job[operation]))
+                   a_m_m[m_p] = max(O_sorted.Release_time[operation], a_m_m[m_p]) + O_sorted.Processing_time[operation]
+                   m_star = m_p
+                   z_ijt += 1
+                   ##random tools taken out until sufficient capacity is reached and the new one is placed in the machine
+                   machine_index = machine_with_number_list.index(m_p) #Use the index of m_p in machine_with_number_list
+                   toolset_size_operation = O_sorted.Toolsetsize[operation]
+                   list_toolset_sizes = array_toolsizes[:,machine_index]
+                   potential_removals = []
+                   index = 0
+                   for a in list_toolset_sizes:
+                       if a > 0:
+                           potential_removals.append((index, a))
+                       index += 1
+                   while list_capacity[machine_index] < toolset_size_operation: #Remove toolsets until sufficient capacity is reached
+                       Decision_random = random.choice(potential_removals)
+                       potential_removals.remove((Decision_random)) #Remove the random choice from the list with potential removals so it can't be chosen again
+                       list_capacity[machine_index] = (list_capacity[machine_index] + Decision_random[1])
+                       binary_array[Decision_random[0], machine_index] = 0
+                       array_toolsizes[Decision_random[0], machine_index] = 0
+                   binary_array[toolset_operation - 1, machine_index] = 1
+                   array_toolsizes[toolset_operation - 1, machine_index] = toolset_size_operation
+                   list_capacity[machine_index] = (list_capacity[machine_index] - toolset_size_operation)
+               else:
+                   sequence_of_jobs[m_t].append((O_sorted.Job[operation]))
+                   a_m_m[m_t] = max(O_sorted.Release_time[operation], a_m_m[m_t]) + O_sorted.Processing_time[operation]
+                   m_star = m_t
+           #m_p and m_t are equal, so assign operation to m_t = m_p        
+           else:
+               sequence_of_jobs[m_t].append((O_sorted.Job[operation]))
+               a_m_m[m_t] = max(O_sorted.Release_time[operation], a_m_m[m_t]) + O_sorted.Processing_time[operation]
+               m_star = m_t
+        #m_t = 0 (required toolset not available) so assign operation to m_p and add the right toolset to the machine
+       else:
+           sequence_of_jobs[m_p].append((O_sorted.Job[operation]))
+           a_m_m[m_p] = max(O_sorted.Release_time[operation], a_m_m[m_p]) + O_sorted.Processing_time[operation]
+           m_star = m_p
+           z_ijt += 1
+           ##random tools taken out until sufficient capacity is reached and the new one is placed in the machine
+           machine_index = machine_with_number_list.index(m_p) #Use the index of m_p in machine_with_number_list
+           toolset_size_operation = O_sorted.Toolsetsize[operation]
+           list_toolset_sizes = array_toolsizes[:,machine_index]
+           potential_removals = []
+           index = 0
+           for a in list_toolset_sizes:
+               if a > 0:
+                   potential_removals.append((index, a))
+               index += 1
+           while list_capacity[machine_index] < toolset_size_operation: #Remove toolsets until sufficient capacity is reached
+               Decision_random = random.choice(potential_removals)
+               potential_removals.remove((Decision_random)) #Remove the random choice from the list with potential removals so it can't be chosen again
+               list_capacity[machine_index] = (list_capacity[machine_index] + Decision_random[1])
+               binary_array[Decision_random[0], machine_index] = 0
+               array_toolsizes[Decision_random[0], machine_index] = 0
+           binary_array[toolset_operation - 1, machine_index] = 1
+           array_toolsizes[toolset_operation - 1, machine_index] = toolset_size_operation
+           list_capacity[machine_index] = (list_capacity[machine_index] - toolset_size_operation)
+           
+#Determine the tardiness and tool setup time per operation           
+       if O_sorted.Operation[operation] == 1:
+           e_ij = max(O_sorted.Release_time[operation], a_m_m[m_star]) + O_sorted.Processing_time[operation] + (τ * z_ijt) #τ defined in input part
+       else:
+           for operation_rejob in range (0, len(O_sorted) - 1):
+               if O_sorted.Job[operation_rejob] == O_sorted.Job[operation] and (O_sorted.Operation[operation_rejob]-1) == O_sorted.Operation[operation]:
+                   duedate_job_before = O_sorted.end_time[operation_rejob]
+               else:
+                   duedate_job_before = 0
+           e_ij = max(O_sorted.Release_time[operation], a_m_m[m_star], duedate_job_before) + O_sorted.Processing_time[operation] + (τ * z_ijt) #τ defined in input part
+       
+       delta_d_ij = max(0, e_ij- O_sorted.Due_date[operation])
+       sum_tardiness += delta_d_ij #sum_tardiness defined in input part
+       sum_setups += z_ijt #sum_setups defined in input part
+       Job_vector_append='Operation_'+str(O_sorted.Job[operation])+'_'+str(O_sorted.Operation[operation])
+       Job_vector.append(Job_vector_append)
+       Machine_vector.append (m_star)
+       O_sorted.end_time[operation]= e_ij
+
+   
+#Determine the objective value
+
+   objective_value = w_d * sum_tardiness + w_s * τ * sum_setups
+#   print(objective_value)
+#   print(Machine_vector, Job_vector)
+   print(objective_value)
+
+
+   return(objective_value, Machine_vector, Job_vector)
+ 
+start = timeit.default_timer()
+
+# All the program statements       
+Practitioner_heuristic(input_file, binary_array, list_capacity)
+stop = timeit.default_timer()
+execution_time = stop - start  
+print(execution_time) 
+#print(binary_array)
+#print(sequence_of_jobs)
+#print(a_m_m)
